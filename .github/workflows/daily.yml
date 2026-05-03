@@ -1,0 +1,78 @@
+name: Kosmiczny Sen — Daily Video
+
+on:
+  schedule:
+    - cron: "0 1 * * *"   # Her gece 01:00 UTC = 03:00 Polonya
+  workflow_dispatch:        # Manuel tetikleme butonu
+
+jobs:
+  produce-and-upload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    env:
+      GEMINI_KEY:  ${{ secrets.GEMINI_KEY }}
+      PIXABAY_KEY: ${{ secrets.PIXABAY_KEY }}
+      NASA_KEY:    ${{ secrets.NASA_KEY }}
+      PYTHONIOENCODING: utf-8
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Python kur
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: FFmpeg kur
+        run: sudo apt-get install -y ffmpeg
+
+      - name: Bağımlılıkları kur
+        run: pip install -r requirements.txt
+
+      - name: Schedule dosyasını indir (cache)
+        uses: actions/cache@v4
+        with:
+          path: |
+            schedule.json
+            episodes/*/clips
+          key: schedule-${{ github.run_number }}
+          restore-keys: schedule-
+
+      - name: YouTube token indir
+        run: |
+          echo '${{ secrets.YOUTUBE_TOKEN }}' > token.json
+
+      - name: Video üret
+        run: python planner.py
+
+      - name: YouTube'a yükle
+        run: python upload.py
+
+      - name: Schedule kaydet
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: |
+            schedule.json
+            episodes/*/clips
+          key: schedule-${{ github.run_number }}
+
+      - name: Özet
+        if: always()
+        run: |
+          echo "### Kosmiczny Sen Günlük Üretim" >> $GITHUB_STEP_SUMMARY
+          python -c "
+          import json
+          from pathlib import Path
+          if Path('schedule.json').exists():
+              data = json.loads(Path('schedule.json').read_text())
+              eps = data['episodes']
+              if eps:
+                  ep = eps[-1]
+                  print(f'**Konu:** {ep[\"topic\"]}')
+                  print(f'**Kategori:** {ep[\"category\"]}')
+                  print(f'**Video ID:** {ep.get(\"video_id\",\"—\")}')
+          " >> $GITHUB_STEP_SUMMARY
