@@ -1,0 +1,9 @@
+google-genai
+google-generativeai
+edge-tts
+numpy
+scipy
+Pillow
+google-api-python-client
+google-auth-httplib2
+google-auth-oauthlib

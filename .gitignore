@@ -1,0 +1,26 @@
+# API keys — asla commit etme
+config_local.py
+.env
+token.json
+client_secret*.json
+
+# Üretilen içerik — büyük dosyalar
+episodes/
+*.mp4
+*.wav
+*.mp3
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Geçici dosyalar
+frames/
+clips/ready_*
+_*.mp4
+_*.txt
+_*.aac
+
+# Schedule (local state)
+schedule.json
