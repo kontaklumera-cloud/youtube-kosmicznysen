@@ -10,7 +10,8 @@ import json, time, argparse, asyncio
 from pathlib import Path
 from google import genai
 
-GEMINI_KEY  = "AIzaSyB9WWEDjEVK9tU9ToSQOoNMzH1be6EjxMg"
+import os
+GEMINI_KEY  = os.environ["GEMINI_KEY"]
 SCHEDULE_F  = Path("schedule.json")
 DURATION    = 2700  # 45 dk
 
@@ -284,7 +285,7 @@ async def plan_and_produce():
         capture_output=True, text=True).stdout.strip())
 
     # Klipleri Gemini sorgularıyla indir
-    clips = gen.fetch_clips(topic, ep_dir/"clips", n=8, extra_queries=queries)
+    clips = gen.fetch_clips(topic, ep_dir/"clips", n=15, extra_queries=queries)
 
     # Müzik + thumbnail + video
     music_f = ep_dir / "music.wav"
@@ -292,9 +293,8 @@ async def plan_and_produce():
     thumb_f = ep_dir / "thumbnail.jpg"
     gen.make_thumbnail(clips, topic, thumb_f)
 
-    seg   = nar_dur / len(clips)
     ready = gen.prepare_clips(clips, nar_dur, ep_dir)
-    video = gen.concat_xfade(ready, nar_dur, seg, ep_dir)
+    video = gen.concat_xfade(ready, nar_dur, ep_dir)
     final = ep_dir / f"kosmiczny_sen_{safe_ep}.mp4"
     gen.assemble(video, audio_f, music_f, ass_f, final)
 
