@@ -344,10 +344,13 @@ def _merge_wav_parts(parts: list, out_path: Path):
         ], capture_output=True)
         mp3_parts.append(tmp)
     list_f.write_text("".join(f"file '{p.as_posix()}'\n" for p in mp3_parts))
-    subprocess.run([
+    r2 = subprocess.run([
         "ffmpeg", "-y", "-f", "concat", "-safe", "0",
         "-i", str(list_f), "-c", "copy", str(out_path)
-    ], capture_output=True)
+    ], capture_output=True, text=True)
+    if r2.returncode != 0:
+        print(f"  UYARI: concat hata — tek parça kullanılıyor\n{r2.stderr[-300:]}")
+        import shutil; shutil.copy(str(mp3_parts[0]), str(out_path))
     for p in mp3_parts:
         p.unlink(missing_ok=True)
     list_f.unlink(missing_ok=True)
@@ -358,7 +361,13 @@ def _extract_sentence_timestamps(script: str, audio_path: Path) -> list:
         "ffprobe", "-v", "error", "-show_entries", "format=duration",
         "-of", "default=noprint_wrappers=1:nokey=1", str(audio_path)
     ], capture_output=True, text=True)
-    total = float(r.stdout.strip())
+    try:
+        total = float(r.stdout.strip())
+    except ValueError:
+        # ffprobe okuyamazsa kelime sayısından tahmin et (~2.3 kelime/sn Lehçe TTS)
+        words = len(script.split())
+        total = words / 2.3
+        print(f"  ffprobe uyarısı: süre tahmin edildi ({total:.0f}s)")
     raw_sentences = re.split(r'(?<=[.!?…])\s+', script.strip())
     sentences = [s.strip() for s in raw_sentences if s.strip()]
     if not sentences:
