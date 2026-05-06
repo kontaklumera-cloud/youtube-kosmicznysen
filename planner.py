@@ -296,7 +296,7 @@ async def plan_and_produce():
     ready = gen.prepare_clips(clips, nar_dur, ep_dir)
     video = gen.concat_xfade(ready, nar_dur, ep_dir)
     final = ep_dir / f"kosmiczny_sen_{safe_ep}.mp4"
-    gen.assemble(video, audio_f, music_f, ass_f, final)
+    gen.assemble(video, audio_f, music_f, final)
 
     for f in ep_dir.glob("_*.mp4"): f.unlink(missing_ok=True)
     for f in ep_dir.glob("_*.txt"): f.unlink(missing_ok=True)

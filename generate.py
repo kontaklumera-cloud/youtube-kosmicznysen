@@ -275,15 +275,14 @@ async def gen_audio(script: str, out_path: Path):
     wav_parts = []
 
     for i, chunk in enumerate(chunks):
-        chunk_ssml = _text_to_ssml(chunk)
         body = json.dumps({
-            "input": {"ssml": chunk_ssml},
+            "input": {"text": chunk},
             "voice": {"languageCode": "pl-PL", "name": TTS_VOICE},
             "audioConfig": {"audioEncoding": "LINEAR16", "sampleRateHertz": 44100}
-        }).encode()
+        }).encode("utf-8")
         req = urllib.request.Request(
             f"https://texttospeech.googleapis.com/v1beta1/text:synthesize?key={GOOGLE_TTS_KEY}",
-            data=body, headers={"Content-Type": "application/json"}
+            data=body, headers={"Content-Type": "application/json; charset=utf-8"}
         )
         for attempt in range(4):
             try:
@@ -644,7 +643,7 @@ def concat_xfade(clips_with_segs: list, duration: float, work_dir: Path):
 
 # ── 8. Final assembly ────────────────────────────────────────────────────────
 
-def assemble(video, narration, music_path, ass, final):
+def assemble(video, narration, music_path, final):
     print("Assembling final video...")
     mixed = final.parent / "_mixed.aac"
     subprocess.run([
@@ -654,10 +653,9 @@ def assemble(video, narration, music_path, ass, final):
         "-map","[o]","-c:a","aac","-b:a","192k",str(mixed)
     ], capture_output=True)
 
-    ass_str = str(ass).replace("\\","/").replace(":","\\:")
     r = subprocess.run([
         "ffmpeg","-y","-i",str(video),"-i",str(mixed),
-        "-vf",f"format=yuv420p,ass='{ass_str}'",
+        "-vf","format=yuv420p",
         "-color_range","1","-colorspace","bt709",
         "-color_primaries","bt709","-color_trc","bt709",
         "-x264-params","colorprim=bt709:transfer=bt709:colormatrix=bt709:fullrange=0",
@@ -670,20 +668,7 @@ def assemble(video, narration, music_path, ass, final):
         mb = final.stat().st_size/1024/1024
         print(f"  ✅ {final.name}  {mb:.1f}MB")
     else:
-        print("  ASS filter failed — embedding as soft subtitle")
-        subprocess.run([
-            "ffmpeg","-y","-i",str(video),"-i",str(mixed),"-i",str(ass),
-            "-vf","format=yuv420p",
-            "-color_range","1","-colorspace","bt709",
-            "-color_primaries","bt709","-color_trc","bt709",
-            "-x264-params","colorprim=bt709:transfer=bt709:colormatrix=bt709:fullrange=0",
-            "-c:v","libx264","-profile:v","high","-level:v","4.1",
-            "-preset","fast","-crf","20",
-            "-c:a","copy","-c:s","mov_text",
-            "-movflags","+faststart","-shortest",str(final)
-        ], capture_output=True)
-        if final.exists():
-            print(f"  ✅ {final.name} (soft subs)  {final.stat().st_size/1024/1024:.1f}MB")
+        print(f"  HATA: {r.stderr[-300:]}")
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 
@@ -738,7 +723,7 @@ async def run(topic: str, duration: int, hook: str = ""):
     # 6. Build video — her klip kendi doğal süresiyle (max 40s)
     ready = prepare_clips(clips, nar_dur, ep_dir)
     video = concat_xfade(ready, nar_dur, ep_dir)
-    assemble(video, audio_f, music_f, ass_f, final_f)
+    assemble(video, audio_f, music_f, final_f)
 
     # Cleanup temp
     for f in ep_dir.glob("_*.mp4"): f.unlink(missing_ok=True)
