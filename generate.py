@@ -326,31 +326,35 @@ def _split_ssml_chunks(text: str, max_bytes: int = 1800) -> list:
     return chunks
 
 def _merge_wav_parts(parts: list, out_path: Path):
-    """WAV parçalarını MP3'e birleştirir."""
+    """WAV parçalarını MP3'e birleştirir. Google TTS LINEAR16 = header'lı WAV."""
     if len(parts) == 1:
         subprocess.run([
-            "ffmpeg", "-y", "-f", "s16le", "-ar", "44100", "-ac", "1",
-            "-i", str(parts[0]), str(out_path)
+            "ffmpeg", "-y", "-i", str(parts[0]),
+            "-c:a", "libmp3lame", "-q:a", "2", str(out_path)
         ], capture_output=True)
         return
     list_f = out_path.parent / "_wav_list.txt"
-    # Önce her parçayı geçici MP3'e çevir
     mp3_parts = []
     for i, p in enumerate(parts):
         tmp = out_path.parent / f"_tts_tmp{i}.mp3"
-        subprocess.run([
-            "ffmpeg", "-y", "-f", "s16le", "-ar", "44100", "-ac", "1",
-            "-i", str(p), str(tmp)
-        ], capture_output=True)
-        mp3_parts.append(tmp)
+        r = subprocess.run([
+            "ffmpeg", "-y", "-i", str(p),
+            "-c:a", "libmp3lame", "-q:a", "2", str(tmp)
+        ], capture_output=True, text=True)
+        if r.returncode == 0 and tmp.exists():
+            mp3_parts.append(tmp)
+        else:
+            print(f"  UYARI: parça {i} dönüştürülemedi: {r.stderr[-200:]}")
+    if not mp3_parts:
+        raise RuntimeError("Hiçbir TTS parçası MP3'e dönüştürülemedi")
     list_f.write_text("".join(f"file '{p.as_posix()}'\n" for p in mp3_parts))
     r2 = subprocess.run([
         "ffmpeg", "-y", "-f", "concat", "-safe", "0",
         "-i", str(list_f), "-c", "copy", str(out_path)
     ], capture_output=True, text=True)
     if r2.returncode != 0:
-        print(f"  UYARI: concat hata — tek parça kullanılıyor\n{r2.stderr[-300:]}")
-        import shutil; shutil.copy(str(mp3_parts[0]), str(out_path))
+        print(f"  UYARI: concat hata — ilk parça kullanılıyor\n{r2.stderr[-300:]}")
+        shutil.copy(str(mp3_parts[0]), str(out_path))
     for p in mp3_parts:
         p.unlink(missing_ok=True)
     list_f.unlink(missing_ok=True)
@@ -364,7 +368,6 @@ def _extract_sentence_timestamps(script: str, audio_path: Path) -> list:
     try:
         total = float(r.stdout.strip())
     except ValueError:
-        # ffprobe okuyamazsa kelime sayısından tahmin et (~2.3 kelime/sn Lehçe TTS)
         words = len(script.split())
         total = words / 2.3
         print(f"  ffprobe uyarısı: süre tahmin edildi ({total:.0f}s)")
@@ -372,9 +375,16 @@ def _extract_sentence_timestamps(script: str, audio_path: Path) -> list:
     sentences = [s.strip() for s in raw_sentences if s.strip()]
     if not sentences:
         return []
-    seg = total / len(sentences)
-    return [{"text": s, "start": i * seg, "dur": seg * 0.92}
-            for i, s in enumerate(sentences)]
+    # Kelime sayısına orantılı zamanlama — eşit dağıtım yerine
+    word_counts = [max(len(s.split()), 1) for s in sentences]
+    total_words = sum(word_counts)
+    result = []
+    current = 0.0
+    for s, wc in zip(sentences, word_counts):
+        dur = (wc / total_words) * total
+        result.append({"text": s, "start": current, "dur": dur * 0.92})
+        current += dur
+    return result
 
 def make_ass(sentences: list, out_path: Path):
     def ts(s):
@@ -488,7 +498,14 @@ def make_thumbnail(clips: list, topic: str, out_path: Path, hook: str = ""):
     draw = ImageDraw.Draw(img)
 
     def F(sz, bold=False):
-        for p in [f"C:/Windows/Fonts/{'arialbd' if bold else 'arial'}.ttf"]:
+        candidates = [
+            f"C:/Windows/Fonts/{'arialbd' if bold else 'arial'}.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans{}-Bold.ttf".format("" if bold else ""),
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans{}.ttf".format("-Bold" if bold else ""),
+            "/usr/share/fonts/truetype/liberation/LiberationSans{}-Bold.ttf".format("" if bold else ""),
+            "/usr/share/fonts/truetype/liberation/LiberationSans{}.ttf".format("-Bold" if bold else ""),
+        ]
+        for p in candidates:
             try: return ImageFont.truetype(p, sz)
             except: pass
         return ImageFont.load_default(size=sz)

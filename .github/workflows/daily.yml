@@ -27,8 +27,8 @@ jobs:
           python-version: "3.11"
           cache: pip
 
-      - name: FFmpeg kur
-        run: sudo apt-get install -y ffmpeg
+      - name: FFmpeg + fontlar kur
+        run: sudo apt-get install -y ffmpeg fonts-dejavu fonts-liberation
 
       - name: Bağımlılıkları kur
         run: pip install -r requirements.txt
