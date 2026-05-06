@@ -4,7 +4,7 @@ Kullanım:
   python generate.py "Powierzchnia Księżyca"
   python generate.py "Wnętrze Czarnej Dziury" --duration 2700
 """
-import argparse, asyncio, subprocess, json, urllib.request, urllib.parse
+import argparse, asyncio, subprocess, json, urllib.request, urllib.parse, base64
 import time, shutil, re
 from pathlib import Path
 import numpy as np
@@ -15,36 +15,46 @@ from google import genai
 # ── Config ───────────────────────────────────────────────────────────────────
 
 import os
-GEMINI_KEY  = os.environ["GEMINI_KEY"]
-PIXABAY_KEY = os.environ["PIXABAY_KEY"]
-NASA_KEY    = os.environ.get("NASA_KEY", "DEMO_KEY")
-VOICE       = "pl-PL-MarekNeural"
-SR, FPS     = 44100, 25
-W, H        = 1920, 1080
+GEMINI_KEY      = os.environ["GEMINI_KEY"]
+PIXABAY_KEY     = os.environ["PIXABAY_KEY"]
+GOOGLE_TTS_KEY  = os.environ["GOOGLE_TTS_KEY"]
+NASA_KEY        = os.environ.get("NASA_KEY", "DEMO_KEY")
+TTS_VOICE       = "pl-PL-Chirp3-HD-Iapetus"
+SR, FPS         = 44100, 25
+W, H            = 1920, 1080
 
 # ── 1. Script generation ─────────────────────────────────────────────────────
 
 SYSTEM_PROMPT = """\
 Jesteś autorem medytacyjnych opowiadań do zasypiania po polsku dla kanału "Kosmiczny Sen".
 
-STYL NARRACJI:
-- Piszesz w 2. osobie liczby pojedynczej ("ty", "jesteś", "czujesz", "widzisz")
-- Płynna, wciągająca narracja — jak storyteller, nie wiersz
-- Pełne, rozbudowane zdania połączone ze sobą, tworzące akapity
-- Słuchacz musi czuć, że JEST w tej historii, że ją przeżywa
-- Tempo spokojne, ale tekst ciągły — nie urywki, nie listy słów
+STRUKTURA KAŻDEGO ODCINKA — naprzemienne bloki:
 
-FORMAT:
-- Tekst podzielony na akapity (3-6 zdań każdy)
-- Między akapitami jedna pusta linia
-- ZAKAZ pisania pojedynczych słów lub półzdań jako osobnych linii
-- ZAKAZ nagłówków, list, markdown, numerowania
-- Tylko czysty, płynny tekst narracyjny
+[BLOK WIEDZY] — 2-4 zdania prawdziwych, fascynujących faktów o temacie.
+Pisz spokojnie, jak narrator dokumentu przyrodniczego. Fakty mają zachwycać, nie uczyć.
+Przykład: "Ciemna strona Księżyca nigdy nie zwraca się ku Ziemi. Przez miliardy lat pozostawała
+zupełnie nieznana — dopiero radziecka sonda jako pierwsza sfotografowała ją w 1959 roku.
+Pod powierzchnią kryją się kratery głębsze niż najwyższe ziemskie góry."
 
-PRZYKŁAD DOBREGO STYLU:
-Unosisz się delikatnie ponad powierzchnią planety, czując jak grawitacja powoli puszcza twoje ciało. Przed tobą rozciąga się ocean złotych chmur, mieniący się w świetle trzech odległych słońc. Powietrze jest ciepłe i lekkie, pachnie czymś słodkim, czego nie potrafisz nazwać, ale co od razu sprawia, że twoje ramiona opadają, a oddech staje się głębszy.
+[BLOK WYOBRAŹNI] — przejście do 2. osoby, słuchacz wchodzi w scenę.
+Zaproś go miękko: "Wyobraź sobie, że...", "A teraz jesteś tam...", "Zamknij oczy — jesteś właśnie tutaj..."
+Opisz co widzi, czuje, słyszy, dotyka. Niech odkrywa to miejsce krok po kroku.
+Przykład: "Wyobraź sobie, że stoisz teraz na tej powierzchni. Pod stopami masz szary,
+zmrożony pył — każdy krok zostawia ślad, który pozostanie tu przez miliony lat, bo nie ma wiatru.
+Włączasz latarkę. Jej światło pada na ogromny krater przede tobą, głęboki i cichy jak ocean."
 
-Gdzieś w dole, przez szczeliny w chmurach, dostrzegasz zarys ogromnych kryształowych wież. Są niebieskie i fioletowe, i dzwonią cicho, gdy wieje wiatr — jakby cały świat był jednym wielkim instrumentem muzycznym. Powoli opadasz ku nim, bez strachu, z poczuciem, że to miejsce czekało właśnie na ciebie.
+ZASADY:
+- Bloki wyobraźni są dłuższe niż bloki wiedzy (stosunek ~1:3)
+- Wiedza zawsze poprzedza wyobraźnię — najpierw fakt, potem "a teraz ty tam jesteś"
+- Spekulacje mile widziane: "Nikt nie wie, czy pod lodem nie kryje się życie... może właśnie to zaraz odkryjesz."
+- Pełne, rozbudowane zdania tworzące akapity — żadnych list, nagłówków, markdown
+- Tempo spokojne — słuchacz zasypia stopniowo przez całą narrację
+- ZAKAZ nagłówków, oznaczeń [BLOK ...] w tekście, numerowania — tylko czysty płynny tekst
+
+PRZYKŁAD DOBREGO PRZEJŚCIA (wiedza → wyobraźnia):
+Ciemna strona Księżyca jest bombardowana meteorytami bez przerwy — nie ma atmosfery, która by je spaliła. Każde uderzenie to cichy błysk w absolutnej ciemności, nowy krater w milionach już istniejących. Naukowcy podejrzewają, że głęboko pod powierzchnią mogą istnieć tunele lawowe — ogromne, stabilne, osłonięte od kosmosu.
+
+A teraz jesteś tam. Stoisz na krawędzi jednego z takich kraterów i patrzysz w dół. Jest głęboki — tak głęboki, że twoja latarka nie dosięga dna. Powietrze w skafandrze pachnie metalem i chłodem. Robisz krok do przodu. Potem jeszcze jeden. Cisza jest tak gęsta, że czujesz ją fizycznie — żaden dźwięk nie istnieje tutaj od początku czasu.
 """
 
 def _gemini_call(prompt: str, system: str, temperature=0.85, max_tokens=8000) -> str:
@@ -82,8 +92,10 @@ def generate_script(topic: str, duration_sec: int) -> str:
         prompt = (
             f"Napisz medytacyjne opowiadanie do zasypiania na temat: '{topic}'.\n"
             f"Długość: dokładnie około {words_needed} słów.\n"
-            f"Zacznij od: 'Zamknij oczy...' Opisz dźwięki, zapachy, odczucia ciała.\n"
-            f"Zakończ gdy słuchacz już zasypia. Tylko czysty tekst, bez nagłówków."
+            f"Zacznij od krótkiego faktu o '{topic}', potem zaproś słuchacza: 'Wyobraź sobie, że jesteś tam...'\n"
+            f"Przeplataj bloki wiedzy (prawdziwe fakty) z blokami wyobraźni (słuchacz jest w scenie, odkrywa to miejsce).\n"
+            f"Bloki wyobraźni są ~3x dłuższe niż bloki wiedzy.\n"
+            f"Zakończ gdy słuchacz całkowicie zasypia. Tylko czysty tekst, bez nagłówków."
         )
         script = _gemini_call(prompt, SYSTEM_PROMPT, max_tokens=8000)
         print(f"  {len(script.split())} kelime üretildi")
@@ -96,27 +108,28 @@ def generate_script(topic: str, duration_sec: int) -> str:
 
     part_prompts = [
         (
-            f"Napisz PIERWSZĄ CZĘŚĆ płynnego opowiadania do zasypiania na temat: '{topic}'.\n"
+            f"Napisz PIERWSZĄ CZĘŚĆ medytacyjnego opowiadania na temat: '{topic}'.\n"
             f"Dokładnie około {part_words} słów.\n"
-            f"Zacznij od słów: 'Zamknij oczy i weź głęboki oddech.'\n"
-            f"Wprowadź słuchacza w scenerię — płynna narracja w akapitach (3-6 zdań każdy).\n"
-            f"Pisz jak storyteller, nie jak poeta. Pełne, rozbudowane zdania tworzące obraz.\n"
-            f"Zakończ akapit w połowie eksploracji — kontynuacja nastąpi w następnej części."
+            f"Zacznij od 2-3 fascynujących faktów o '{topic}' — mów spokojnie jak narrator dokumentu.\n"
+            f"Potem zaproś słuchacza: 'Wyobraź sobie, że stoisz teraz tam...' i opisz scenę szczegółowo.\n"
+            f"Przeplataj fakty z wyobraźnią — najpierw fakt, potem słuchacz wchodzi w to miejsce.\n"
+            f"Zakończ w połowie eksploracji — kontynuacja nastąpi."
         ),
         (
-            f"Napisz ŚRODKOWĄ CZĘŚĆ opowiadania do zasypiania na temat: '{topic}'.\n"
+            f"Napisz ŚRODKOWĄ CZĘŚĆ medytacyjnego opowiadania na temat: '{topic}'.\n"
             f"Dokładnie około {part_words + extra} słów.\n"
-            f"Kontynuuj płynnie od momentu, gdzie skończyła się pierwsza część.\n"
-            f"Wchodź głębiej w scenerię — nowe miejsca, szczegóły, odczucia zmysłowe.\n"
-            f"Akapity po 3-6 zdań. Słuchacz powoli odpływa w sen.\n"
-            f"Zakończ akapit — kontynuacja nastąpi."
+            f"Kontynuuj płynnie — słuchacz nadal odkrywa to miejsce.\n"
+            f"Dodaj nowe fascynujące fakty, a po każdym wciągaj słuchacza głębiej w scenerię.\n"
+            f"Możesz spekulować: 'Nikt nie wie, czy tam nie kryje się życie... może właśnie to zaraz zobaczysz.'\n"
+            f"Słuchacz powoli staje się senny. Zakończ akapit — kontynuacja nastąpi."
         ),
         (
-            f"Napisz KOŃCOWĄ CZĘŚĆ opowiadania do zasypiania na temat: '{topic}'.\n"
+            f"Napisz KOŃCOWĄ CZĘŚĆ medytacyjnego opowiadania na temat: '{topic}'.\n"
             f"Dokładnie około {part_words} słów.\n"
-            f"Słuchacz jest już bardzo senny. Narracja wciąż płynna, ale spokojniejsza.\n"
-            f"Ostatnie obrazy są coraz bardziej mgławicowe, rozmyte jak sen.\n"
-            f"Zakończ gdy słuchacz całkowicie zasypia — ostatnie zdanie bardzo spokojne."
+            f"Słuchacz jest już bardzo senny — narracja spokojniejsza, wolniejsza.\n"
+            f"Ostatnie fakty są krótkie, prawie szeptane. Wyobraźnia dominuje.\n"
+            f"Obrazy stają się coraz bardziej mgławicowe i senne.\n"
+            f"Zakończ gdy słuchacz całkowicie zasypia — ostatnie zdanie bardzo spokojne i ciche."
         ),
     ]
 
@@ -159,12 +172,25 @@ def topic_to_queries(topic: str):
 BLACKLIST_TAGS = {
     "car","race","rally","ski","skiing","factory","chimney","smoke","pollution",
     "trash","rubbish","city","traffic","people","crowd","food","cooking","dog",
-    "cat","bird","sport","football","beach party","fireworks","office","business"
+    "cat","bird","sport","football","beach party","fireworks","office","business",
+    "nature","forest","tree","flower","animal","wildlife","ocean","sea","beach",
+    "mountain","river","lake","rain","snow","desert","jungle","farm","harvest"
+}
+
+# Uzay teması için beyaz liste — en az biri eşleşmeli
+SPACE_TAGS = {
+    "space","cosmos","galaxy","nebula","star","stars","universe","planet",
+    "moon","lunar","mars","asteroid","comet","meteor","solar","aurora",
+    "milky way","astronomy","telescope","orbit","satellite","supernova",
+    "cosmic","black hole","spacecraft","rocket","nasa","astronaut","iss",
+    "earth from space","deep space","interstellar","void","dark matter"
 }
 
 def _tags_ok(tags_str: str) -> bool:
     tags = {t.strip().lower() for t in tags_str.split(",")}
-    return len(tags & BLACKLIST_TAGS) == 0
+    has_blacklist = len(tags & BLACKLIST_TAGS) > 0
+    has_space     = len(tags & SPACE_TAGS) > 0
+    return has_space and not has_blacklist
 
 def fetch_clips(topic: str, clips_dir: Path, n=8, extra_queries: list = None):
     print("Video klipleri indiriliyor...")
@@ -178,7 +204,7 @@ def fetch_clips(topic: str, clips_dir: Path, n=8, extra_queries: list = None):
     for q in all_queries:
         if len(got) >= n: break
         url = (f"https://pixabay.com/api/videos/?key={PIXABAY_KEY}"
-               f"&q={urllib.parse.quote(q)}&per_page=15"
+               f"&q={urllib.parse.quote(q)}&per_page=20"
                f"&min_width=1280&order=popular&video_type=film")
         try:
             r = urllib.request.urlopen(url, timeout=12)
@@ -220,23 +246,126 @@ def fetch_clips(topic: str, clips_dir: Path, n=8, extra_queries: list = None):
 
 # ── 4. Audio + ASS subtitles ─────────────────────────────────────────────────
 
+def _text_to_ssml(script: str) -> str:
+    """Düz metni SSML'e çevirir — noktalama bazlı duraklamalar ekler."""
+    lines = script.strip().split("\n")
+    parts = []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            parts.append('<break time="400ms"/>')
+            continue
+        # & işaretini escape et (tek özel karakter)
+        line = line.replace("&", "&amp;")
+        # Noktalama bazlı duraklamalar
+        line = re.sub(r'\.\.\.', '...<break time="400ms"/>', line)
+        line = re.sub(r'\.(\s)', r'.<break time="300ms"/>\1', line)
+        line = re.sub(r'—', '<break time="200ms"/>—<break time="200ms"/>', line)
+        line = re.sub(r',(\s)', r',<break time="150ms"/>\1', line)
+        parts.append(line)
+    return "<speak>\n" + "\n".join(parts) + "\n</speak>"
+
 async def gen_audio(script: str, out_path: Path):
-    import edge_tts
-    print("Generating audio...")
-    tts = edge_tts.Communicate(script, voice=VOICE, rate="-12%", pitch="-3Hz")
-    sentences = []
-    with open(out_path, "wb") as f:
-        async for chunk in tts.stream():
-            if chunk["type"] == "audio":
-                f.write(chunk["data"])
-            elif chunk["type"] == "SentenceBoundary":
-                sentences.append({
-                    "text":  chunk["text"],
-                    "start": chunk["offset"]  / 10_000_000,
-                    "dur":   chunk["duration"] / 10_000_000,
-                })
-    print(f"  {len(sentences)} sentence timestamps")
-    return sentences
+    print("Generating audio (Google Cloud TTS — Iapetus)...")
+    ssml = _text_to_ssml(script)
+
+    # Metni 4500 karakterlik parçalara böl (API limiti)
+    sentences_all = []
+    chunks = _split_ssml_chunks(script)
+    wav_parts = []
+
+    for i, chunk in enumerate(chunks):
+        chunk_ssml = _text_to_ssml(chunk)
+        body = json.dumps({
+            "input": {"ssml": chunk_ssml},
+            "voice": {"languageCode": "pl-PL", "name": TTS_VOICE},
+            "audioConfig": {"audioEncoding": "LINEAR16", "sampleRateHertz": 44100}
+        }).encode()
+        req = urllib.request.Request(
+            f"https://texttospeech.googleapis.com/v1beta1/text:synthesize?key={GOOGLE_TTS_KEY}",
+            data=body, headers={"Content-Type": "application/json"}
+        )
+        for attempt in range(4):
+            try:
+                r = urllib.request.urlopen(req, timeout=60)
+                raw = base64.b64decode(json.loads(r.read())["audioContent"])
+                part_wav = out_path.parent / f"_tts_part{i}.wav"
+                part_wav.write_bytes(raw)
+                wav_parts.append(part_wav)
+                print(f"  Parça {i+1}/{len(chunks)} OK")
+                break
+            except Exception as e:
+                if attempt < 3:
+                    time.sleep(10)
+                else:
+                    raise RuntimeError(f"TTS hata: {e}")
+
+    # Parçaları birleştir
+    _merge_wav_parts(wav_parts, out_path)
+    for p in wav_parts:
+        p.unlink(missing_ok=True)
+
+    # Altyazı için cümleleri timestamp ile çıkar (ffprobe ile)
+    sentences_all = _extract_sentence_timestamps(script, out_path)
+    print(f"  {len(sentences_all)} sentence timestamps")
+    return sentences_all
+
+def _split_ssml_chunks(text: str, max_bytes: int = 1800) -> list:
+    """Metni cümle sınırlarından böler — byte limiti bazlı."""
+    sentences = re.split(r'(?<=[.!?…])\s+', text.strip())
+    chunks, cur = [], ""
+    for s in sentences:
+        candidate = (cur + " " + s).strip()
+        if len(candidate.encode("utf-8")) > max_bytes and cur:
+            chunks.append(cur.strip())
+            cur = s
+        else:
+            cur = candidate
+    if cur:
+        chunks.append(cur.strip())
+    return chunks
+
+def _merge_wav_parts(parts: list, out_path: Path):
+    """WAV parçalarını MP3'e birleştirir."""
+    if len(parts) == 1:
+        subprocess.run([
+            "ffmpeg", "-y", "-f", "s16le", "-ar", "44100", "-ac", "1",
+            "-i", str(parts[0]), str(out_path)
+        ], capture_output=True)
+        return
+    list_f = out_path.parent / "_wav_list.txt"
+    # Önce her parçayı geçici MP3'e çevir
+    mp3_parts = []
+    for i, p in enumerate(parts):
+        tmp = out_path.parent / f"_tts_tmp{i}.mp3"
+        subprocess.run([
+            "ffmpeg", "-y", "-f", "s16le", "-ar", "44100", "-ac", "1",
+            "-i", str(p), str(tmp)
+        ], capture_output=True)
+        mp3_parts.append(tmp)
+    list_f.write_text("".join(f"file '{p.as_posix()}'\n" for p in mp3_parts))
+    subprocess.run([
+        "ffmpeg", "-y", "-f", "concat", "-safe", "0",
+        "-i", str(list_f), "-c", "copy", str(out_path)
+    ], capture_output=True)
+    for p in mp3_parts:
+        p.unlink(missing_ok=True)
+    list_f.unlink(missing_ok=True)
+
+def _extract_sentence_timestamps(script: str, audio_path: Path) -> list:
+    """Ses dosyasının toplam süresine göre cümleleri eşit dağıtır."""
+    r = subprocess.run([
+        "ffprobe", "-v", "error", "-show_entries", "format=duration",
+        "-of", "default=noprint_wrappers=1:nokey=1", str(audio_path)
+    ], capture_output=True, text=True)
+    total = float(r.stdout.strip())
+    raw_sentences = re.split(r'(?<=[.!?…])\s+', script.strip())
+    sentences = [s.strip() for s in raw_sentences if s.strip()]
+    if not sentences:
+        return []
+    seg = total / len(sentences)
+    return [{"text": s, "start": i * seg, "dur": seg * 0.92}
+            for i, s in enumerate(sentences)]
 
 def make_ass(sentences: list, out_path: Path):
     def ts(s):
@@ -403,37 +532,76 @@ def make_thumbnail(clips: list, topic: str, out_path: Path, hook: str = ""):
 # ── 7. Prepare + concat clips ────────────────────────────────────────────────
 
 def prepare_clips(raw: list, duration: float, work_dir: Path):
-    n   = len(raw)
-    seg = duration / n
+    """
+    Her klip kendi doğal süresiyle (max 40s) kullanılır.
+    Toplam süreye ulaşana kadar klip listesi döngüye alınır.
+    Dönen: [(dest_path, actual_seg_sec), ...]
+    """
+    MAX_SEG = 40.0
+    MIN_SEG = 8.0
     ready = []
-    print(f"Preparing {n} clips ({seg:.1f}s each)...")
-    for i, src in enumerate(raw):
+    total = 0.0
+    clip_count = 0
+    use_count = {}  # her kaynak klip kaç kez kullanıldı
+
+    print(f"Preparing clips for {duration:.0f}s total (max {MAX_SEG:.0f}s/clip, loop if needed)...")
+
+    while total < duration - 0.5:
+        src = raw[clip_count % len(raw)]
+        src_key = str(src)
+        times_used = use_count.get(src_key, 0)
+        use_count[src_key] = times_used + 1
+
         r = subprocess.run(["ffprobe","-v","error","-show_entries","format=duration",
             "-of","default=noprint_wrappers=1:nokey=1",str(src)],
             capture_output=True, text=True)
         try: src_dur = float(r.stdout.strip())
-        except: src_dur = seg
-        start = max(0, (src_dur - seg) / 2)
-        dest  = work_dir / f"_r{i:02d}.mp4"
+        except: src_dur = MAX_SEG
+
+        remaining = duration - total
+        seg = min(src_dur, MAX_SEG, remaining)
+        if seg < MIN_SEG:
+            seg = min(remaining, src_dur)
+
+        # Aynı klip tekrar kullanılıyorsa farklı başlangıç noktası
+        if times_used == 0:
+            start = max(0, (src_dur - seg) / 2)
+        else:
+            offset_step = src_dur / (times_used + 2)
+            start = min(offset_step * times_used, max(0, src_dur - seg))
+
+        dest = work_dir / f"_r{clip_count:02d}.mp4"
         subprocess.run([
             "ffmpeg","-y","-ss",str(start),"-i",str(src),"-t",str(seg),
             "-vf",f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},fps={FPS}",
             "-c:v","libx264","-preset","fast","-crf","18","-an",str(dest)
         ], capture_output=True)
-        if dest.exists(): ready.append(dest)
-        print(f"  clip {i+1}/{n}")
+
+        if dest.exists():
+            ready.append((dest, seg))
+            total += seg
+            print(f"  clip {clip_count+1}: {src.name} {seg:.1f}s  (total {total:.0f}/{duration:.0f}s)")
+
+        clip_count += 1
+        if clip_count > 300:
+            break
+
     return ready
 
-def concat_xfade(clips: list, duration: float, seg: float, work_dir: Path):
+def concat_xfade(clips_with_segs: list, duration: float, work_dir: Path):
+    """clips_with_segs: [(path, seg_sec), ...]"""
+    clips = [c for c, _ in clips_with_segs]
+    segs  = [s for _, s in clips_with_segs]
     if len(clips) == 1: return clips[0]
-    print("Applying crossfades...")
+    print(f"Applying crossfades ({len(clips)} clips)...")
     inputs = sum([["-i",str(c)] for c in clips],[])
     fade   = 0.8
     parts, cur = [], "[0:v]"
+    offset_total = 0.0
     for i in range(1, len(clips)):
-        offset = i*seg - i*fade
+        offset_total += segs[i-1] - fade
         nxt = f"[v{i}]" if i < len(clips)-1 else "[vout]"
-        parts.append(f"{cur}[{i}:v]xfade=transition=fade:duration={fade}:offset={offset:.3f}{nxt}")
+        parts.append(f"{cur}[{i}:v]xfade=transition=fade:duration={fade}:offset={offset_total:.3f}{nxt}")
         cur = f"[v{i}]"
     out = work_dir / "_concat.mp4"
     r = subprocess.run(
@@ -530,8 +698,8 @@ async def run(topic: str, duration: int, hook: str = ""):
         capture_output=True, text=True).stdout.strip())
     print(f"  Narration: {nar_dur/60:.1f} min")
 
-    # 3. Video clips
-    clips = fetch_clips(topic, ep_dir/"clips", n=8)
+    # 3. Video clips — daha fazla çeşit al, döngüye alınacak
+    clips = fetch_clips(topic, ep_dir/"clips", n=15)
     if not clips:
         print("ERROR: no clips"); return
 
@@ -541,10 +709,9 @@ async def run(topic: str, duration: int, hook: str = ""):
     # 5. Thumbnail
     make_thumbnail(clips, topic, thumb_f, hook=hook)
 
-    # 6. Build video
-    seg   = nar_dur / len(clips)
+    # 6. Build video — her klip kendi doğal süresiyle (max 40s)
     ready = prepare_clips(clips, nar_dur, ep_dir)
-    video = concat_xfade(ready, nar_dur, seg, ep_dir)
+    video = concat_xfade(ready, nar_dur, ep_dir)
     assemble(video, audio_f, music_f, ass_f, final_f)
 
     # Cleanup temp
