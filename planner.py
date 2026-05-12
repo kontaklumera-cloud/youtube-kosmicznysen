@@ -8,12 +8,12 @@ Kullanım:
 """
 import json, time, argparse, asyncio
 from pathlib import Path
-from google import genai
+import anthropic
 
 import os
-GEMINI_KEY  = os.environ["GEMINI_KEY"]
+ANTHROPIC_KEY  = os.environ["ANTHROPIC_API_KEY"]
 SCHEDULE_F  = Path("schedule.json")
-DURATION    = 2700  # 45 dk
+DURATION    = 840   # 14 dk
 
 # ── Kategoriler ───────────────────────────────────────────────────────────────
 
@@ -135,7 +135,7 @@ def generate_topic(category: dict, used: list) -> dict:
     - 3 Pixabay arama terimi (İngilizce)
     - Kısa açıklama
     """
-    print(f"  Gemini konu üretiyor ({category['name']})...")
+    print(f"  Claude konu üretiyor ({category['name']})...")
 
     used_str = "\n".join(f"- {t}" for t in used[-20:]) if used else "— henüz yok —"
 
@@ -157,15 +157,16 @@ Yanıtını SADECE aşağıdaki JSON formatında ver, başka hiçbir şey yazma:
   "mood": "serene/mystical/dreamy/cosmic"
 }}"""
 
-    client = genai.Client(api_key=GEMINI_KEY)
+    client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
     for attempt in range(5):
         try:
-            r = client.models.generate_content(
-                model="models/gemini-2.5-flash-lite",
-                contents=prompt,
-                config={"temperature": 0.95, "max_output_tokens": 512}
+            r = client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=512,
+                temperature=0.95,
+                messages=[{"role": "user", "content": prompt}]
             )
-            raw = r.text.strip()
+            raw = r.content[0].text.strip()
             # JSON bloğunu çıkar
             if "```" in raw:
                 raw = raw.split("```")[1].lstrip("json").strip()
@@ -173,16 +174,15 @@ Yanıtını SADECE aşağıdaki JSON formatında ver, başka hiçbir şey yazma:
             print(f"  Konu: {data['topic']}")
             print(f"  Sorgular: {data['pixabay_queries']}")
             return data
+        except anthropic.RateLimitError:
+            wait = 35 * (attempt + 1)
+            print(f"  Rate limit — {wait}s bekleniyor...")
+            time.sleep(wait)
         except Exception as e:
-            if "429" in str(e) or "RESOURCE" in str(e):
-                wait = 35 * (attempt + 1)
-                print(f"  Rate limit — {wait}s bekleniyor...")
-                time.sleep(wait)
-            else:
-                print(f"  Hata: {e}")
-                time.sleep(10)
+            print(f"  Hata: {e}")
+            time.sleep(10)
 
-    raise RuntimeError("Gemini konu üretemedi")
+    raise RuntimeError("Claude konu üretemedi")
 
 # ── YouTube Analytics entegrasyonu (gelecek) ─────────────────────────────────
 

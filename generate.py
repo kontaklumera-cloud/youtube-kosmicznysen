@@ -2,7 +2,7 @@
 Kosmiczny Sen — tam otomatik video üretici
 Kullanım:
   python generate.py "Powierzchnia Księżyca"
-  python generate.py "Wnętrze Czarnej Dziury" --duration 2700
+  python generate.py "Wnętrze Czarnej Dziury" --duration 840
 """
 import argparse, asyncio, subprocess, json, urllib.request, urllib.parse, base64
 import time, shutil, re
@@ -10,12 +10,12 @@ from pathlib import Path
 import numpy as np
 from scipy.io import wavfile
 from PIL import Image, ImageDraw, ImageFont
-from google import genai
+import anthropic
 
 # ── Config ───────────────────────────────────────────────────────────────────
 
 import os
-GEMINI_KEY      = os.environ["GEMINI_KEY"]
+ANTHROPIC_KEY   = os.environ["ANTHROPIC_API_KEY"]
 PIXABAY_KEY     = os.environ["PIXABAY_KEY"]
 GOOGLE_TTS_KEY  = os.environ["GOOGLE_TTS_KEY"]
 NASA_KEY        = os.environ.get("NASA_KEY", "DEMO_KEY")
@@ -57,27 +57,26 @@ Ciemna strona Księżyca jest bombardowana meteorytami bez przerwy — nie ma at
 A teraz jesteś tam. Stoisz na krawędzi jednego z takich kraterów i patrzysz w dół. Jest głęboki — tak głęboki, że twoja latarka nie dosięga dna. Powietrze w skafandrze pachnie metalem i chłodem. Robisz krok do przodu. Potem jeszcze jeden. Cisza jest tak gęsta, że czujesz ją fizycznie — żaden dźwięk nie istnieje tutaj od początku czasu.
 """
 
-def _gemini_call(prompt: str, system: str, temperature=0.85, max_tokens=8000) -> str:
-    """Gemini API çağrısı — rate limit retry ile."""
-    client = genai.Client(api_key=GEMINI_KEY)
+def _claude_call(prompt: str, system: str, temperature=0.85, max_tokens=8000) -> str:
+    """Claude API çağrısı — rate limit retry ile."""
+    client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
     for attempt in range(6):
         try:
-            r = client.models.generate_content(
-                model="models/gemini-2.5-flash-lite",
-                contents=prompt,
-                config={"system_instruction": system,
-                        "temperature": temperature,
-                        "max_output_tokens": max_tokens}
+            r = client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=max_tokens,
+                temperature=temperature,
+                system=system,
+                messages=[{"role": "user", "content": prompt}]
             )
-            return r.text.strip()
+            return r.content[0].text.strip()
+        except anthropic.RateLimitError:
+            wait = 40 * (attempt + 1)
+            print(f"  Rate limit — {wait}s bekleniyor...")
+            time.sleep(wait)
         except Exception as e:
-            if "429" in str(e) or "RESOURCE" in str(e):
-                wait = 40 * (attempt + 1)
-                print(f"  Rate limit — {wait}s bekleniyor...")
-                time.sleep(wait)
-            else:
-                raise
-    raise RuntimeError("Gemini API failed after retries")
+            raise
+    raise RuntimeError("Claude API failed after retries")
 
 def generate_script(topic: str, duration_sec: int) -> str:
     """
@@ -97,7 +96,7 @@ def generate_script(topic: str, duration_sec: int) -> str:
             f"Bloki wyobraźni są ~3x dłuższe niż bloki wiedzy.\n"
             f"Zakończ gdy słuchacz całkowicie zasypia. Tylko czysty tekst, bez nagłówków."
         )
-        script = _gemini_call(prompt, SYSTEM_PROMPT, max_tokens=8000)
+        script = _claude_call(prompt, SYSTEM_PROMPT, max_tokens=8000)
         print(f"  {len(script.split())} kelime üretildi")
         return script
 
@@ -135,7 +134,7 @@ def generate_script(topic: str, duration_sec: int) -> str:
 
     for i, prompt in enumerate(part_prompts, 1):
         print(f"  Parça {i}/3 üretiliyor...")
-        part = _gemini_call(prompt, SYSTEM_PROMPT, temperature=0.88, max_tokens=8000)
+        part = _claude_call(prompt, SYSTEM_PROMPT, temperature=0.88, max_tokens=8000)
         parts.append(part)
         if i < 3:
             time.sleep(5)  # rate limit önlemi
@@ -648,7 +647,7 @@ def assemble(video, narration, music_path, final):
     mixed = final.parent / "_mixed.aac"
     subprocess.run([
         "ffmpeg","-y","-i",str(narration),"-i",str(music_path),
-        "-filter_complex","[0:a]volume=1.0[v];[1:a]volume=0.15[m];"
+        "-filter_complex","[0:a]volume=1.0[v];[1:a]volume=0.35[m];"
                           "[v][m]amix=inputs=2:duration=first:dropout_transition=4[o]",
         "-map","[o]","-c:a","aac","-b:a","192k",str(mixed)
     ], capture_output=True)
@@ -669,6 +668,133 @@ def assemble(video, narration, music_path, final):
         print(f"  ✅ {final.name}  {mb:.1f}MB")
     else:
         print(f"  HATA: {r.stderr[-300:]}")
+
+# ── 9. YouTube Short ─────────────────────────────────────────────────────────
+
+SHORT_INVITE_SCRIPTS = [
+    "Wyobraź sobie, że każdej nocy zasypiasz wśród gwiazd... Głęboki sen, spokojny oddech, piękne obrazy. Śledź kanał Kosmiczny Sen — nowy odcinek każdego wieczoru o ósmej. Do zobaczenia w kosmosie.",
+    "Czy wiesz, że spokojny sen to najlepszy odpoczynek, jaki możesz sobie dać? Na kanale Kosmiczny Sen znajdziesz medytacyjne opowieści, które pomogą ci zasnąć każdej nocy. Subskrybuj — nowy odcinek o ósmej.",
+    "Każdej nocy o ósmej — nowa podróż przez kosmos. Zamknij oczy, oddech się uspokaja, myśli odpływają. Kosmiczny Sen — zasubskrybuj i śpij głębiej każdej nocy.",
+    "Głęboki sen zaczyna się od jednego spokojnego oddechu... i jednej opowieści. Kosmiczny Sen — medytacyjne podróże przez wszechświat, każdego wieczoru o ósmej. Śledź kanał, żeby nie przegapić.",
+]
+
+import random
+
+async def make_short(clips: list, ep_dir: Path, topic: str) -> Path:
+    """Create a 9:16 YouTube Short (≤60s) with space visuals and channel invite."""
+    print("Creating YouTube Short...")
+    short_dir = ep_dir / "short"
+    short_dir.mkdir(exist_ok=True)
+
+    # Pick invite script
+    script = random.choice(SHORT_INVITE_SCRIPTS)
+
+    # Generate TTS for short
+    short_audio = short_dir / "short_narration.mp3"
+    chunks = _split_ssml_chunks(script, max_bytes=4000)
+    wav_parts = []
+    for i, chunk in enumerate(chunks):
+        body = json.dumps({
+            "input": {"text": chunk},
+            "voice": {"languageCode": "pl-PL", "name": TTS_VOICE},
+            "audioConfig": {"audioEncoding": "LINEAR16", "sampleRateHertz": 44100}
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            f"https://texttospeech.googleapis.com/v1beta1/text:synthesize?key={GOOGLE_TTS_KEY}",
+            data=body, headers={"Content-Type": "application/json; charset=utf-8"}
+        )
+        try:
+            r = urllib.request.urlopen(req, timeout=30)
+            raw = base64.b64decode(json.loads(r.read())["audioContent"])
+            p = short_dir / f"_s{i}.wav"
+            p.write_bytes(raw)
+            wav_parts.append(p)
+        except Exception as e:
+            print(f"  Short TTS error: {e}")
+            return None
+
+    _merge_wav_parts(wav_parts, short_audio)
+    for p in wav_parts:
+        p.unlink(missing_ok=True)
+
+    # Get narration duration (cap at 58s for Shorts)
+    r = subprocess.run(["ffprobe","-v","error","-show_entries","format=duration",
+        "-of","default=noprint_wrappers=1:nokey=1",str(short_audio)],
+        capture_output=True, text=True)
+    try:
+        nar_dur = min(float(r.stdout.strip()), 58.0)
+    except:
+        nar_dur = 45.0
+
+    # Generate short ambient music
+    short_music = short_dir / "short_music.wav"
+    make_music(nar_dur + 2, short_music)
+
+    # Mix audio
+    short_mixed = short_dir / "short_mixed.aac"
+    subprocess.run([
+        "ffmpeg","-y","-i",str(short_audio),"-i",str(short_music),
+        "-filter_complex","[0:a]volume=1.0[v];[1:a]volume=0.30[m];"
+                          "[v][m]amix=inputs=2:duration=first:dropout_transition=2[o]",
+        "-map","[o]","-c:a","aac","-b:a","192k",str(short_mixed)
+    ], capture_output=True)
+
+    # Crop best clip to 9:16 (1080x1920)
+    best_clip = clips[0] if clips else None
+    short_video = short_dir / "short_video.mp4"
+    if best_clip:
+        subprocess.run([
+            "ffmpeg","-y","-i",str(best_clip),
+            "-t",str(nar_dur),
+            "-vf",("scale=1080:1920:force_original_aspect_ratio=increase,"
+                   "crop=1080:1920,fps=25"),
+            "-c:v","libx264","-preset","fast","-crf","20","-an",str(short_video)
+        ], capture_output=True)
+    else:
+        # Black background fallback
+        subprocess.run([
+            "ffmpeg","-y","-f","lavfi","-i",f"color=c=black:s=1080x1920:r=25:d={nar_dur:.1f}",
+            "-c:v","libx264","-preset","fast",str(short_video)
+        ], capture_output=True)
+
+    # Text overlay: channel name + topic (bottom)
+    safe_topic = topic.replace("'", "\\'").replace(":", "\\:")
+    drawtext = (
+        f"drawtext=text='🌙 Kosmiczny Sen':fontsize=52:fontcolor=white:x=(w-text_w)/2:y=h-220"
+        f":shadowcolor=black:shadowx=2:shadowy=2,"
+        f"drawtext=text='Nowy odcinek każdego wieczoru o 20\\:00':fontsize=32"
+        f":fontcolor=0xC8C8FF:x=(w-text_w)/2:y=h-150:shadowcolor=black:shadowx=1:shadowy=1"
+    )
+
+    short_final = ep_dir / "short.mp4"
+    r = subprocess.run([
+        "ffmpeg","-y","-i",str(short_video),"-i",str(short_mixed),
+        "-vf",f"format=yuv420p,{drawtext}",
+        "-c:v","libx264","-preset","fast","-crf","20",
+        "-c:a","copy","-movflags","+faststart","-shortest",str(short_final)
+    ], capture_output=True, text=True)
+
+    if r.returncode == 0:
+        mb = short_final.stat().st_size / 1024 / 1024
+        print(f"  ✅ Short created: {short_final.name}  {mb:.1f}MB  {nar_dur:.0f}s")
+    else:
+        # Fallback without text overlay
+        subprocess.run([
+            "ffmpeg","-y","-i",str(short_video),"-i",str(short_mixed),
+            "-vf","format=yuv420p","-c:v","libx264","-preset","fast","-crf","20",
+            "-c:a","copy","-movflags","+faststart","-shortest",str(short_final)
+        ], capture_output=True)
+        print(f"  ✅ Short created (no overlay): {short_final.name}")
+
+    # Cleanup
+    for f in short_dir.glob("*.mp4"): f.unlink(missing_ok=True)
+    for f in short_dir.glob("*.wav"): f.unlink(missing_ok=True)
+    for f in short_dir.glob("*.aac"): f.unlink(missing_ok=True)
+    for f in short_dir.glob("*.mp3"): f.unlink(missing_ok=True)
+    try: short_dir.rmdir()
+    except: pass
+
+    return short_final
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 
@@ -724,6 +850,9 @@ async def run(topic: str, duration: int, hook: str = ""):
     ready = prepare_clips(clips, nar_dur, ep_dir)
     video = concat_xfade(ready, nar_dur, ep_dir)
     assemble(video, audio_f, music_f, final_f)
+
+    # 7. YouTube Short
+    await make_short(clips, ep_dir, topic)
 
     # Cleanup temp
     for f in ep_dir.glob("_*.mp4"): f.unlink(missing_ok=True)

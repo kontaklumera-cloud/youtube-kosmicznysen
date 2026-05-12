@@ -1,5 +1,5 @@
 """YouTube'a otomatik video yükleme."""
-import os, json, time
+import os, json, time, datetime
 from pathlib import Path
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
@@ -26,24 +26,41 @@ def get_youtube():
         TOKEN_FILE.write_text(creds.to_json())
     return build("youtube", "v3", credentials=creds)
 
+def _schedule_time(hour: int, minute: int) -> str:
+    """Return ISO 8601 UTC timestamp for today at given local hour:minute (Warsaw time = UTC+2)."""
+    now = datetime.datetime.now()
+    local = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    # Warsaw is UTC+2 (simplification — no DST handling)
+    utc = local - datetime.timedelta(hours=2)
+    return utc.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
 def upload(video_path: Path, title: str, description: str,
-           tags: list, thumbnail_path: Path = None):
+           tags: list, thumbnail_path: Path = None,
+           publish_at: str = None, is_short: bool = False):
+    """
+    publish_at: ISO 8601 UTC string — if set, video is scheduled (private until then).
+    is_short: if True, adds #Shorts to title and sets category to 22.
+    """
     yt = get_youtube()
+
+    full_title = (title + " #Shorts")[:100] if is_short else title[:100]
 
     body = {
         "snippet": {
-            "title": title[:100],
+            "title": full_title,
             "description": description,
             "tags": tags,
-            "categoryId": "22",  # People & Blogs (uyku içeriği için)
+            "categoryId": "22",
             "defaultLanguage": "pl",
             "defaultAudioLanguage": "pl",
         },
         "status": {
-            "privacyStatus": "public",
+            "privacyStatus": "private" if publish_at else "public",
             "selfDeclaredMadeForKids": False,
         }
     }
+    if publish_at:
+        body["status"]["publishAt"] = publish_at
 
     media = MediaFileUpload(str(video_path), chunksize=-1, resumable=True,
                             mimetype="video/mp4")
@@ -57,7 +74,10 @@ def upload(video_path: Path, title: str, description: str,
             print(f"  %{int(status.progress()*100)}", end="\r")
 
     video_id = response["id"]
-    print(f"  ✅ Yüklendi: https://youtube.com/watch?v={video_id}")
+    if publish_at:
+        print(f"  ✅ Zamanlandı ({publish_at}): https://youtube.com/watch?v={video_id}")
+    else:
+        print(f"  ✅ Yüklendi: https://youtube.com/watch?v={video_id}")
 
     if thumbnail_path and thumbnail_path.exists():
         yt.thumbnails().set(videoId=video_id,
@@ -67,7 +87,7 @@ def upload(video_path: Path, title: str, description: str,
     return video_id
 
 def upload_latest():
-    """En son üretilen bölümü yükle."""
+    """En son üretilen bölümü ve Short'u yükle — ana video 20:00, Short 20:15."""
     schedule_f = Path("schedule.json")
     if not schedule_f.exists():
         print("schedule.json bulunamadı"); return
@@ -75,22 +95,23 @@ def upload_latest():
     data = json.loads(schedule_f.read_text(encoding="utf-8"))
     episodes = data.get("episodes", [])
 
-    # video_id olmayan son bölümü bul
     pending = [ep for ep in episodes if not ep.get("video_id")]
     if not pending:
         print("Yüklenecek bölüm yok"); return
 
     ep = pending[-1]
-    safe  = ep["topic_safe"]
+    safe   = ep["topic_safe"]
     ep_dir = Path("episodes") / safe
 
-    video_f = next(ep_dir.glob("*.mp4"), None)
+    # Main video (not the short)
+    main_videos = [f for f in ep_dir.glob("*.mp4") if f.name != "short.mp4"]
+    video_f = main_videos[0] if main_videos else None
+    short_f = ep_dir / "short.mp4"
     thumb_f = ep_dir / "thumbnail.jpg"
 
     if not video_f:
         print(f"Video bulunamadı: {ep_dir}"); return
 
-    # Başlık + açıklama
     hook  = ep.get("hook", ep["topic"])
     title = f"{hook} | Kosmiczny Sen 🌙 | Sen & Relaksacja"
 
@@ -102,7 +123,7 @@ Zamknij oczy i pozwól się ponieść w głąb tej opowieści...
 
 ────────────────────────────
 🌙 Kosmiczny Sen — Zaśnij wśród gwiazd
-Nowy odcinek każdego dnia.
+Nowy odcinek każdego wieczoru o 20:00.
 Subskrybuj i włącz powiadomienia 🔔
 ────────────────────────────
 
@@ -115,11 +136,36 @@ Subskrybuj i włącz powiadomienia 🔔
         ep["category"], "sleep meditation", "polish sleep story"
     ]
 
-    video_id = upload(video_f, title, description, tags, thumb_f)
+    # Upload main video — scheduled 20:00
+    main_publish = _schedule_time(20, 0)
+    print(f"Ana video yükleniyor → {main_publish}")
+    video_id = upload(video_f, title, description, tags, thumb_f,
+                      publish_at=main_publish)
 
-    # schedule.json'a kaydet
     ep["video_id"] = video_id
     ep["uploaded_at"] = time.strftime("%Y-%m-%d %H:%M")
+    ep["publish_at"] = main_publish
+
+    # Upload Short — scheduled 20:15
+    if short_f.exists():
+        short_title = f"{hook} | Kosmiczny Sen 🌙"
+        short_desc = (
+            f"Zaśnij wśród gwiazd 🌙\n\n"
+            f"Pełny odcinek na kanale Kosmiczny Sen — nowy każdego wieczoru o 20:00!\n\n"
+            f"#sen #kosmos #relaksacja #zasypianie #kosmicznySen"
+        )
+        short_tags = ["sen", "shorts", "relaksacja", "kosmos", "kosmiczny sen",
+                      "zasypianie", "medytacja", "sleep", "space"]
+        short_publish = _schedule_time(20, 15)
+        print(f"Short yükleniyor → {short_publish}")
+        short_id = upload(short_f, short_title, short_desc, short_tags,
+                          publish_at=short_publish, is_short=True)
+        ep["short_id"] = short_id
+        ep["short_publish_at"] = short_publish
+        print(f"  Short: https://youtube.com/shorts/{short_id}")
+    else:
+        print("  Short bulunamadı, atlanıyor")
+
     schedule_f.write_text(json.dumps(data, ensure_ascii=False, indent=2),
                           encoding="utf-8")
     print(f"\n  Kaydedildi: {ep['topic']} → {video_id}")
