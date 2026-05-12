@@ -13,7 +13,7 @@ import anthropic
 import os
 ANTHROPIC_KEY  = os.environ["ANTHROPIC_API_KEY"]
 SCHEDULE_F  = Path("schedule.json")
-DURATION    = 840   # 14 dk
+DURATION    = 1800  # 30 dk
 
 # ── Kategoriler ───────────────────────────────────────────────────────────────
 

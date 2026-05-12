@@ -156,7 +156,7 @@ Subskrybuj i włącz powiadomienia 🔔
         )
         short_tags = ["sen", "shorts", "relaksacja", "kosmos", "kosmiczny sen",
                       "zasypianie", "medytacja", "sleep", "space"]
-        short_publish = _schedule_time(20, 15)
+        short_publish = _schedule_time(22, 0)
         print(f"Short yükleniyor → {short_publish}")
         short_id = upload(short_f, short_title, short_desc, short_tags,
                           publish_at=short_publish, is_short=True)

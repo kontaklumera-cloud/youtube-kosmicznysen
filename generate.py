@@ -83,7 +83,7 @@ def generate_script(topic: str, duration_sec: int) -> str:
     45 dk için ~5800 kelime lazım — model limiti ~8000 token (~6000 kelime).
     45 dk altı: tek istek. 45 dk+: 3 parçada üret, birleştir.
     """
-    words_needed = int((duration_sec / 60) * 130)
+    words_needed = int((duration_sec / 60) * 105)  # meditasyon temposu
     print(f"Script üretiliyor: '{topic}'  ~{words_needed} kelime ({duration_sec//60} dk)...")
 
     if words_needed <= 1800:
@@ -671,23 +671,50 @@ def assemble(video, narration, music_path, final):
 
 # ── 9. YouTube Short ─────────────────────────────────────────────────────────
 
-SHORT_INVITE_SCRIPTS = [
-    "Wyobraź sobie, że każdej nocy zasypiasz wśród gwiazd... Głęboki sen, spokojny oddech, piękne obrazy. Śledź kanał Kosmiczny Sen — nowy odcinek każdego wieczoru o ósmej. Do zobaczenia w kosmosie.",
-    "Czy wiesz, że spokojny sen to najlepszy odpoczynek, jaki możesz sobie dać? Na kanale Kosmiczny Sen znajdziesz medytacyjne opowieści, które pomogą ci zasnąć każdej nocy. Subskrybuj — nowy odcinek o ósmej.",
-    "Każdej nocy o ósmej — nowa podróż przez kosmos. Zamknij oczy, oddech się uspokaja, myśli odpływają. Kosmiczny Sen — zasubskrybuj i śpij głębiej każdej nocy.",
-    "Głęboki sen zaczyna się od jednego spokojnego oddechu... i jednej opowieści. Kosmiczny Sen — medytacyjne podróże przez wszechświat, każdego wieczoru o ósmej. Śledź kanał, żeby nie przegapić.",
-]
-
 import random
 
-async def make_short(clips: list, ep_dir: Path, topic: str) -> Path:
+def generate_short_script(topic: str, hook: str = "") -> str:
+    """Claude ile konuya özel Short scripti üret."""
+    prompt = f"""Napisz krótki skrypt do YouTube Shorts (max 55 sekund czytania) dla kanału "Kosmiczny Sen".
+
+Temat odcinka: "{topic}"
+
+STRUKTURA — trzy płynnie połączone fragmenty, bez żadnych etykiet:
+
+1. HOOK (pierwsze 1-2 zdania) — zatrzymuje scrollowanie. Zaskakujące, konkretne. NIE zaczynaj od "Czy wiesz". Przykłady stylu: "Twój mózg nigdy tak naprawdę nie wyłącza się podczas snu.", "To miejsce nie istnieje — a mimo to możesz tam być dziś w nocy.", "Naukowcy do dziś nie wiedzą, dlaczego śnimy o miejscach, których nigdy nie widzieliśmy."
+
+2. CIEKAWOSTKA (2-3 zdania) — jeden prawdziwy, zaskakujący fakt o "{topic}". Krótko i konkretnie. Fakt ma być naprawdę zaskakujący, nie oczywisty.
+
+3. CTA (2-3 zdania) — jeśli chcesz zasnąć przy obrazach {topic}, pełny 30-minutowy odcinek już na kanale. Kosmiczny Sen — nowy odcinek co dwa dni o 20:00. Jedno zdanie zaproszenia do subskrypcji.
+
+Tylko czysty tekst. Naturalne przejścia. Spokojny, lekko tajemniczy ton."""
+
+    client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
+    try:
+        r = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=350,
+            temperature=0.92,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        script = r.content[0].text.strip()
+        print(f"  Short script: {len(script.split())} kelime")
+        return script
+    except Exception as e:
+        print(f"  Short script hatası: {e} — varsayılan kullanılıyor")
+        return (
+            f"To miejsce czeka na ciebie każdej nocy. "
+            f"Pełny 30-minutowy odcinek o {topic} już na kanale Kosmiczny Sen. "
+            f"Jeśli chcesz zasnąć wśród gwiazd — wejdź i zostań. Nowy odcinek co dwa dni o 20:00."
+        )
+
+async def make_short(clips: list, ep_dir: Path, topic: str, hook: str = "") -> Path:
     """Create a 9:16 YouTube Short (≤60s) with space visuals and channel invite."""
     print("Creating YouTube Short...")
     short_dir = ep_dir / "short"
     short_dir.mkdir(exist_ok=True)
 
-    # Pick invite script
-    script = random.choice(SHORT_INVITE_SCRIPTS)
+    script = generate_short_script(topic, hook)
 
     # Generate TTS for short
     short_audio = short_dir / "short_narration.mp3"
@@ -852,7 +879,7 @@ async def run(topic: str, duration: int, hook: str = ""):
     assemble(video, audio_f, music_f, final_f)
 
     # 7. YouTube Short
-    await make_short(clips, ep_dir, topic)
+    await make_short(clips, ep_dir, topic, hook=hook)
 
     # Cleanup temp
     for f in ep_dir.glob("_*.mp4"): f.unlink(missing_ok=True)

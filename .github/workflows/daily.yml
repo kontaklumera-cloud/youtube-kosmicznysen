@@ -2,7 +2,7 @@ name: Kosmiczny Sen — Daily Video
 
 on:
   schedule:
-    - cron: "0 1 * * *"   # Her gece 01:00 UTC = 03:00 Polonya
+    - cron: "0 1 */2 * *"  # Her 2 gecede 01:00 UTC = 03:00 Polonya
   workflow_dispatch:        # Manuel tetikleme butonu
 
 jobs:
