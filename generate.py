@@ -331,31 +331,32 @@ def _merge_wav_parts(parts: list, out_path: Path):
             "-c:a", "libmp3lame", "-q:a", "2", str(out_path)
         ], capture_output=True)
         return
-    list_f = out_path.parent / "_wav_list.txt"
-    mp3_parts = []
-    for i, p in enumerate(parts):
-        tmp = out_path.parent / f"_tts_tmp{i}.mp3"
-        r = subprocess.run([
-            "ffmpeg", "-y", "-i", str(p),
-            "-c:a", "libmp3lame", "-q:a", "2", str(tmp)
-        ], capture_output=True, text=True)
-        if r.returncode == 0 and tmp.exists():
-            mp3_parts.append(tmp)
-        else:
-            print(f"  UYARI: parça {i} dönüştürülemedi: {r.stderr[-200:]}")
-    if not mp3_parts:
-        raise RuntimeError("Hiçbir TTS parçası MP3'e dönüştürülemedi")
-    list_f.write_text("".join(f"file '{p.as_posix()}'\n" for p in mp3_parts))
-    r2 = subprocess.run([
-        "ffmpeg", "-y", "-f", "concat", "-safe", "0",
-        "-i", str(list_f), "-c", "copy", str(out_path)
-    ], capture_output=True, text=True)
-    if r2.returncode != 0:
-        print(f"  UYARI: concat hata — ilk parça kullanılıyor\n{r2.stderr[-300:]}")
-        shutil.copy(str(mp3_parts[0]), str(out_path))
-    for p in mp3_parts:
-        p.unlink(missing_ok=True)
-    list_f.unlink(missing_ok=True)
+
+    # Tüm WAV'ları numpy ile oku ve birleştir (aynı format: LINEAR16 44100Hz)
+    arrays = []
+    sr = None
+    for p in parts:
+        try:
+            rate, data = wavfile.read(str(p))
+            if sr is None:
+                sr = rate
+            arrays.append(data)
+        except Exception as e:
+            print(f"  UYARI: {p.name} okunamadı: {e}")
+
+    if not arrays:
+        raise RuntimeError("Hiçbir TTS WAV parçası okunamadı")
+
+    combined = np.concatenate(arrays, axis=0)
+    merged_wav = out_path.parent / "_merged_tts.wav"
+    wavfile.write(str(merged_wav), sr, combined)
+    print(f"  WAV birleştirildi: {len(arrays)} parça, {combined.shape[0]/sr:.1f}s")
+
+    subprocess.run([
+        "ffmpeg", "-y", "-i", str(merged_wav),
+        "-c:a", "libmp3lame", "-q:a", "2", str(out_path)
+    ], capture_output=True)
+    merged_wav.unlink(missing_ok=True)
 
 def _extract_sentence_timestamps(script: str, audio_path: Path) -> list:
     """Ses dosyasının toplam süresine göre cümleleri eşit dağıtır."""
