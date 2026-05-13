@@ -291,12 +291,16 @@ async def plan_and_produce():
     music_f = ep_dir / "music.wav"
     gen.make_music(nar_dur, music_f)
     thumb_f = ep_dir / "thumbnail.jpg"
-    gen.make_thumbnail(clips, topic, thumb_f)
+    hook = topic_data.get("hook", "")
+    gen.make_thumbnail(clips, topic, thumb_f, hook=hook)
 
     ready = gen.prepare_clips(clips, nar_dur, ep_dir)
     video = gen.concat_xfade(ready, nar_dur, ep_dir)
     final = ep_dir / f"kosmiczny_sen_{safe_ep}.mp4"
     gen.assemble(video, audio_f, music_f, final)
+
+    # YouTube Short üret
+    await gen.make_short(clips, ep_dir, topic, hook=hook)
 
     for f in ep_dir.glob("_*.mp4"): f.unlink(missing_ok=True)
     for f in ep_dir.glob("_*.txt"): f.unlink(missing_ok=True)

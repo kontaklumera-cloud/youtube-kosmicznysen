@@ -83,10 +83,10 @@ def generate_script(topic: str, duration_sec: int) -> str:
     45 dk için ~5800 kelime lazım — model limiti ~8000 token (~6000 kelime).
     45 dk altı: tek istek. 45 dk+: 3 parçada üret, birleştir.
     """
-    words_needed = int((duration_sec / 60) * 105)  # meditasyon temposu
+    words_needed = int((duration_sec / 60) * 130)  # TTS temposu ~130 kelime/dk
     print(f"Script üretiliyor: '{topic}'  ~{words_needed} kelime ({duration_sec//60} dk)...")
 
-    if words_needed <= 1800:
+    if words_needed <= 2200:
         # Kısa — tek istek
         prompt = (
             f"Napisz medytacyjne opowiadanie do zasypiania na temat: '{topic}'.\n"

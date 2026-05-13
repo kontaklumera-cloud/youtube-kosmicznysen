@@ -62,16 +62,26 @@ def upload(video_path: Path, title: str, description: str,
     if publish_at:
         body["status"]["publishAt"] = publish_at
 
-    media = MediaFileUpload(str(video_path), chunksize=-1, resumable=True,
+    media = MediaFileUpload(str(video_path), chunksize=5*1024*1024, resumable=True,
                             mimetype="video/mp4")
     print(f"Yükleniyor: {video_path.name}")
     req = yt.videos().insert(part="snippet,status", body=body, media_body=media)
 
     response = None
+    retry = 0
     while response is None:
-        status, response = req.next_chunk()
-        if status:
-            print(f"  %{int(status.progress()*100)}", end="\r")
+        try:
+            status, response = req.next_chunk()
+            if status:
+                print(f"  %{int(status.progress()*100)}", end="\r")
+            retry = 0
+        except Exception as e:
+            retry += 1
+            if retry > 10:
+                raise
+            wait = min(60, 5 * retry)
+            print(f"\n  Ağ hatası ({e.__class__.__name__}), {wait}s sonra tekrar...")
+            time.sleep(wait)
 
     video_id = response["id"]
     if publish_at:
