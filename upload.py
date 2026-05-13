@@ -27,12 +27,17 @@ def get_youtube():
     return build("youtube", "v3", credentials=creds)
 
 def _schedule_time(hour: int, minute: int) -> str:
-    """Return ISO 8601 UTC timestamp for today at given local hour:minute (Warsaw time = UTC+2)."""
-    now = datetime.datetime.now()
-    local = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-    # Warsaw is UTC+2 (simplification — no DST handling)
-    utc = local - datetime.timedelta(hours=2)
-    return utc.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    """Return ISO 8601 UTC timestamp for next occurrence of given Warsaw hour:minute."""
+    now_utc = datetime.datetime.now(datetime.timezone.utc)
+    # Poland: UTC+2 (CEST, Apr–Oct) or UTC+1 (CET, Nov–Mar)
+    month = now_utc.month
+    utc_offset = 2 if 3 < month < 11 else 1
+    target_utc_hour = hour - utc_offset
+    publish = now_utc.replace(hour=target_utc_hour, minute=minute, second=0, microsecond=0)
+    # If the time has already passed (or within 15 min), push to next day
+    if publish <= now_utc + datetime.timedelta(minutes=15):
+        publish += datetime.timedelta(days=1)
+    return publish.strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
 def upload(video_path: Path, title: str, description: str,
            tags: list, thumbnail_path: Path = None,
